@@ -1,5 +1,6 @@
-import { Context, h, z } from 'koishi'
+import { capitalize, Context, h, z } from 'koishi'
 import {} from 'koishi-plugin-w-as-forward'
+import {} from 'koishi-plugin-w-as-slices'
 
 import * as cheerio from 'cheerio'
 
@@ -13,7 +14,7 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
-    cookie: z.string().role('textarea').default('').description('要使用的 Cookie（主要用于登录，登录后  才能获取下载链接等）'),
+    cookie: z.string().role('textarea').default('').description('要使用的 Cookie（主要用于登录，登录后      才能获取下载链接等）'),
     domain: z.string().default('z-lib.fm').description('要使用的 zlibrary 域名')
 })
 
@@ -37,7 +38,7 @@ export function apply(ctx: Context, config: Config) {
         })
 
 
-    ctx.command('zlib.search <filter:string>', '在 zlibrary 中搜索书籍')
+    ctx.command('zlib.search <filter:text>', '在 zlibrary 中搜索书籍')
         .option('shortUrl', '-s 显示短链接')
         .option('page', '-p <page:posint> 指定页码')
         .action(async ({ options: { page, shortUrl } }, filter) => {
@@ -57,20 +58,21 @@ export function apply(ctx: Context, config: Config) {
             const durationText = ((endTime - startTime) / 1000).toFixed(2)
 
             const $ = cheerio.load(html)
-            const items = $('.resItemBox')
+            const items = $('z-bookcard')
                 .toArray()
                 .map(el => {
                     const $item = $(el)
-                    const $title = $item.find('h3 > a')
-                    const $authors = $item.find('.authors > a')
+                    const $title = $item.find('[slot=title]')
+                    const $author = $item.find('[slot=author]')
                     return {
                         title: $title.text(),
-                        url: $title.attr('href'),
-                        downloadUrl: $item.find('.property__file > a').attr('href'),
-                        cover: $item.find('z-cover > a').attr('href'),
-                        authors: $authors.toArray().map(el => $(el).text()),
-                        year: $item.find('.property_year > .property_value').text(),
-                        language: $item.find('.property_language > .property_value').text()
+                        authors: $author.text().split(';'),
+                        url: $item.attr('href'),
+                        downloadUrl: $item.attr('download'),
+                        year: + $item.attr('year'),
+                        language: $item.attr('language'),
+                        size: $item.attr('filesize'),
+                        rating: + $item.attr('rating')
                     }
                 })
 
@@ -82,11 +84,12 @@ export function apply(ctx: Context, config: Config) {
                 .map((item, index) => <>
                     <br />
                     <br /> [#{index + 1}]
-                    <br /> [标题] {item.title}
-                    <br /> [作者] {item.authors.join(', ')} [年份] {item.year} [语言] ${item.language}
+                    <br /> [标题] { item.title }
+                    <br /> [作者] { (item.authors.length > 2 ? item.authors.slice(0, 2).concat('...') : item.authors).join('; ') }
+                    <br /> [年份] { item.year || 'N/A' } [语言] { capitalize(item.language) } [评分] { '★'.repeat(item.rating) || '☆' }
                     <br /> [详情] <a href={getUrl(item.url)}></a>
                     { item.downloadUrl && <>
-                        <br /> [下载] <a href={getUrl(item.downloadUrl)}></a>
+                        <br /> [大小] { item.size } [下载] <a href= {getUrl(item.downloadUrl) }></a>
                     </> }
                 </>)
 
@@ -96,20 +99,10 @@ export function apply(ctx: Context, config: Config) {
                 + `，用时 ${durationText} 秒`
                 + `（${getLoginStat(username)}）`
 
-            const MAX_SLICE_LENGTH = 5000
-            const [ itemTextSlices ] = itemTexts.reduce<[ string[], string ]>(([ slices, currentSlice ], text, index) => {
-                const appendedSlice = currentSlice + text
-                if (appendedSlice.length >= MAX_SLICE_LENGTH || index === itemTexts.length - 1) {
-                    slices.push(appendedSlice)
-                    return [ slices, '' ]
-                }
-                return [ slices, appendedSlice ]
-            }, [ [], headerText ])
-
             return <as-forward level='always'>
-                { itemTextSlices.map(slice => <message>
-                    { h.parse(slice) }
-                </message>) }
+                <as-slices sliceLength={5000} header={headerText}>
+                    { itemTexts }
+                </as-slices>
             </as-forward>
         })
 }

@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-w-zlibrary",
   "description": "WillBot: zlibrary functions",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@satorijs/element": "^3.1.7",
-    "cheerio": "^1.0.0"
+    "cheerio": "^1.0.0",
+    "koishi-plugin-w-as-slices": "workspace:^"
   },
   "devDependencies": {
     "koishi-plugin-w-as-forward": "workspace:^"
