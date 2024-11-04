@@ -1,4 +1,5 @@
-import { capitalize, Context, h, z } from 'koishi'
+import { capitalize, Context, z } from 'koishi'
+import {} from 'koishi-plugin-w-assets-remote'
 import {} from 'koishi-plugin-w-as-forward'
 import {} from 'koishi-plugin-w-as-slices'
 
@@ -6,7 +7,7 @@ import * as cheerio from 'cheerio'
 
 export const name = 'w-zlibrary'
 
-export const inject = [ 'http' ]
+export const inject = [ 'http', 'assetsAlt' ]
 
 export interface Config {
     cookie: string
@@ -36,7 +37,6 @@ export function apply(ctx: Context, config: Config) {
             const username = $('.user-card__name').text().trim()
             return getLoginStat(username)
         })
-
 
     ctx.command('zlib.search <filter:text>', '在 zlibrary 中搜索书籍')
         .option('shortUrl', '-s 显示短链接')
@@ -104,5 +104,47 @@ export function apply(ctx: Context, config: Config) {
                     { itemTexts }
                 </as-slices>
             </as-forward>
+        })
+
+    ctx.command('zlib.store <url:string>', '转存 zlibrary 的书籍到 Koishi', { authority: 2 })
+        .action(async ({ session }, url) => {
+            const escapeRegExp = (segments: TemplateStringsArray, ...args: string[]) => {
+                const re = segments
+                    .map((segment, index) => segment + (args[index]?.replace(/[-[\]{}()*+?.,\\^$|#]/g, '\\$&') ?? ''))
+                    .join('')
+                return new RegExp(re, 'g')
+            }
+
+            const match = url.match(escapeRegExp`(https?://|/)?${config.domain}/book/.*\\.html`)
+            if (! match) return <>请提供正确的 zlibrary <strong>详情</strong>链接</>
+            const path = new URL(url).pathname
+            url = `https://${config.domain}${path}`
+
+            session.send(<>正在请求详情页面……</>)
+
+            const html = await ctx.http.get(url, {
+                responseType: 'text',
+                headers: {
+                    Cookie: config.cookie
+                }
+            })
+            const $ = cheerio.load(html)
+
+            const downloadPath = $('a[href^="/dl/"]').attr('href')
+            const downloadUrl = `https://${config.domain}${downloadPath}`
+            session.send(<>已获取<a href={downloadUrl}>下载链接</a>，下载中……</>)
+
+            const downloadBlob = await ctx.http.get(downloadUrl, {
+                responseType: 'blob',
+                headers: {
+                    Cookie: config.cookie
+                }
+            })
+
+            const extname = $('.book-property__extension').text()
+            const filename = path.slice('/book/'.length).replaceAll('/', '_').replace(/html$/, extname)
+            const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, filename)
+
+            return <>成功转存到 Koishi：{assetUrl}</>
         })
 }

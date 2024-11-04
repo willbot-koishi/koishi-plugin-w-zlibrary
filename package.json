@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-w-zlibrary",
   "description": "WillBot: zlibrary functions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -23,7 +23,8 @@
     "koishi-plugin-w-as-slices": "workspace:^"
   },
   "devDependencies": {
-    "koishi-plugin-w-as-forward": "workspace:^"
+    "koishi-plugin-w-as-forward": "workspace:^",
+    "koishi-plugin-w-assets-remote": "workspace:^"
   },
   "scripts": {
     "build": "yarn workspace willbot build w-zlibrary",
