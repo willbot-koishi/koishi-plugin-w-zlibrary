@@ -37,6 +37,7 @@ interface Book {
 interface StoredBook extends Book {
     fileName: string
     assetUrl: string
+    storerUid: string
 }
 
 declare module 'koishi' {
@@ -131,7 +132,8 @@ export function apply(ctx: Context, config: Config) {
         rating: 'integer',
         quality: 'integer',
         fileName: 'string',
-        assetUrl: 'string'
+        assetUrl: 'string',
+        storerUid: 'string'
     }, {
         primary: 'fileName'
     })
@@ -260,10 +262,11 @@ export function apply(ctx: Context, config: Config) {
             })
 
             const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, fileName)
-            await ctx.database.set('w-zlibrary-stored-book', fileName, {
+            await ctx.database.create('w-zlibrary-stored-book', {
                 ...book,
                 fileName,
-                assetUrl
+                assetUrl,
+                storerUid: session.uid
             })
 
             return <>成功转存书籍：{assetUrl}</>
@@ -273,12 +276,8 @@ export function apply(ctx: Context, config: Config) {
         .action(async () => {
             const storedBooks = await ctx.database.get('w-zlibrary-stored-book', {})
             return <as-forward level='always'>
-                <as-slices
-                    header={ <>共有 { storedBooks.length } 本转存的书籍：<br /></> }
-                    sliceLength={5000}
-                >
-                    { storedBooks.map(renderBook({ shortUrl: false })) }
-                </as-slices>
+                <message>共有 { storedBooks.length } 本转存的书籍</message>
+                { storedBooks.map(renderBook({ shortUrl: false })).map(el => <message>{ el }</message>) }
             </as-forward>
         })
 }
