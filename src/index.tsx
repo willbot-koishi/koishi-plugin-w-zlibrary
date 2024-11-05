@@ -19,6 +19,32 @@ export const Config: z<Config> = z.object({
     domain: z.string().default('z-lib.fm').description('要使用的 zlibrary 域名')
 })
 
+
+interface Book {
+    title: string
+    authors: string[]
+    coverUrl?: string
+    url: string
+    downloadUrl?: string
+    year: number
+    language: string
+    fileSize?: string
+    extension?: string
+    rating: number
+    quality: number
+}
+
+interface StoredBook extends Book {
+    fileName: string
+    assetUrl: string
+}
+
+declare module 'koishi' {
+    interface Tables {
+        'w-zlibrary-stored-book': StoredBook
+    }
+}
+
 const escapeRegExp = (segments: TemplateStringsArray, ...args: string[]) => {
     const re = segments
         .map((segment, index) => segment + (args[index]?.replace(/[-[\]{}()*+?.,\\^$|#]/g, '\\$&') ?? ''))
@@ -27,8 +53,6 @@ const escapeRegExp = (segments: TemplateStringsArray, ...args: string[]) => {
 }
 
 export function apply(ctx: Context, config: Config) {
-    ctx.command('zlib', 'zlibrary 功能')
-
     const getLoginStat = (username?: string) => username ? `已登录：${username}` : '未登录'
 
     const validateDetailUrl = (url: string) => {
@@ -41,43 +65,11 @@ export function apply(ctx: Context, config: Config) {
         }
     }
 
-    ctx.command('zlib.loginstat', '查看 zlibrary 登录状态')
-        .action(async () => {
-            const requestUrl = `https://${config.domain}/`
-            const html = await ctx.http.get(requestUrl, {
-                responseType: 'text',
-                headers: {
-                    Cookie: config.cookie
-                }
-            })
-            const $ = cheerio.load(html)
-            const username = $('.user-card__name').text().trim()
-            return getLoginStat(username)
-        })
-
-    ctx.i18n.define('en-US', {
-        id: '{0}'
-    })
-
-    interface Book {
-        title: string
-        authors: string[]
-        coverUrl?: string
-        url: string
-        downloadUrl?: string
-        year: number
-        language: string
-        fileSize?: string
-        extension?: string
-        rating: number
-        quality: number
-    }
-
     const getUrl = (url: string, short: boolean) => (short ? '' : `https://${config.domain}`) + decodeURI(url) 
 
     const renderRating = (rating: number) => '★'.repeat(rating) || '☆'
 
-    const renderBook = (options: { shortUrl: boolean, header?: any }) => (book: Book, index?: number) => <>
+    const renderBook = (options: { shortUrl: boolean, header?: any }) => (book: Book | StoredBook, index?: number) => <>
         { options.header ?? <></> }
         { typeof index === 'number' ? <>
             <br /> [#{index + 1}]
@@ -93,7 +85,76 @@ export function apply(ctx: Context, config: Config) {
         { book.downloadUrl ? <>
             <br /> [大小] { book.fileSize } [类型] { book.extension } [下载] <a href={ getUrl(book.downloadUrl, options.shortUrl) }></a>
         </> : '' }
+        { 'assetUrl' in book ? <>
+            <br /> [转存] { book.assetUrl }
+        </> : '' }
     </>
+
+    const fetchBookDetail = async (detailUrl: string) => {
+        const html = await ctx.http.get(detailUrl, {
+            responseType: 'text',
+            headers: {
+                Cookie: config.cookie
+            }
+        })
+        const $ = cheerio.load(html)
+
+        const [ extension, fileSize ] = $('.property__file > .property_value').text().split(', ')
+
+        const book: Book = {
+            title: $('.book-title').text(),
+            coverUrl: $('.details-book-cover-container > z-cover img').data('src') as string,
+            authors: $('.book-title + i > a').toArray().map(el => $(el).text()),
+            url: detailUrl,
+            downloadUrl: $('a[href^="/dl/"]').attr('href'),
+            year: + $('.property_year > .property_value').text(),
+            language: $('.property_language > .property_value').text(),
+            fileSize,
+            extension,
+            rating: + $('.book-rating-interest-score').text(),
+            quality: + $('.book-rating-quality-score').text()
+        }
+
+        return book
+    }
+
+    ctx.model.extend('w-zlibrary-stored-book', {
+        title: 'string',
+        authors: { type: 'array', inner: 'string' },
+        coverUrl: 'string',
+        url: 'string',
+        downloadUrl: 'string',
+        year: 'integer',
+        language: 'string',
+        fileSize: 'string',
+        extension: 'string',
+        rating: 'integer',
+        quality: 'integer',
+        fileName: 'string',
+        assetUrl: 'string'
+    }, {
+        primary: 'fileName'
+    })
+
+    ctx.i18n.define('en-US', {
+        id: '{0}'
+    })
+
+    ctx.command('zlib', 'zlibrary 功能')
+
+    ctx.command('zlib.loginstat', '查看 zlibrary 登录状态')
+        .action(async () => {
+            const requestUrl = `https://${config.domain}/`
+            const html = await ctx.http.get(requestUrl, {
+                responseType: 'text',
+                headers: {
+                    Cookie: config.cookie
+                }
+            })
+            const $ = cheerio.load(html)
+            const username = $('.user-card__name').text().trim()
+            return getLoginStat(username)
+        })
 
     ctx.command('zlib.search <filter:text>', '在 zlibrary 中搜索书籍')
         .option('shortUrl', '-s 显示短链接')
@@ -158,29 +219,8 @@ export function apply(ctx: Context, config: Config) {
             const startTime = Date.now()
 
             session.send(<>正在请求详情页面……</>)
-            const html = await ctx.http.get(detailUrl, {
-                responseType: 'text',
-                headers: {
-                    Cookie: config.cookie
-                }
-            })
-            const $ = cheerio.load(html)
 
-            const [ fileType, fileSize ] = $('.property__file > .property_value').text().split(', ')
-
-            const book: Book = {
-                title: $('.book-title').text(),
-                coverUrl: $('.details-book-cover-container > z-cover img').data('src') as string,
-                authors: $('.book-title + i > a').toArray().map(el => $(el).text()),
-                url: detailUrl,
-                downloadUrl: $('a[href^="/dl/"]').attr('href'),
-                year: + $('.property_year > .property_value').text(),
-                language: $('.property_language > .property_value').text(),
-                fileSize,
-                extension: fileType,
-                rating: + $('.book-rating-interest-score').text(),
-                quality: + $('.book-rating-quality-score').text()
-            }
+            const book = await fetchBookDetail(detailUrl)
             
             const endTime = Date.now()
             const durationText = ((endTime - startTime) / 1000).toFixed(2)
@@ -196,16 +236,20 @@ export function apply(ctx: Context, config: Config) {
             const { url: detailUrl, path: detailPath } = validateDetailUrl(url)
 
             session.send(<>正在请求详情页面……</>)
-            const html = await ctx.http.get(detailUrl, {
-                responseType: 'text',
-                headers: {
-                    Cookie: config.cookie
-                }
-            })
-            const $ = cheerio.load(html)
 
-            const downloadPath = $('a[href^="/dl/"]').attr('href')
-            const downloadUrl = `https://${config.domain}${downloadPath}`
+            const book = await fetchBookDetail(detailUrl)
+            const { extension } = book 
+            const downloadUrl = getUrl(book.downloadUrl, false)
+            const fileName = detailPath
+                .slice('/book/'.length)
+                .replaceAll('/', '_')
+                .replace(/html$/, extension)
+
+            const [ storedBook ] = await ctx.database.get('w-zlibrary-stored-book', fileName)
+            if (storedBook) {
+                return <>已转存过此书籍：{storedBook.assetUrl}</>
+            }
+
             session.send(<>已获取<a href={downloadUrl}>下载链接</a>，下载中……</>)
 
             const downloadBlob = await ctx.http.get(downloadUrl, {
@@ -215,10 +259,26 @@ export function apply(ctx: Context, config: Config) {
                 }
             })
 
-            const extname = $('.book-property__extension').text()
-            const filename = detailPath.slice('/book/'.length).replaceAll('/', '_').replace(/html$/, extname)
-            const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, filename)
+            const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, fileName)
+            await ctx.database.set('w-zlibrary-stored-book', fileName, {
+                ...book,
+                fileName,
+                assetUrl
+            })
 
-            return <>成功转存到 Koishi：{assetUrl}</>
+            return <>成功转存书籍：{assetUrl}</>
+        })
+    
+    ctx.command('zlib.store.list', '查看已转存的 zlibrary 书籍')
+        .action(async () => {
+            const storedBooks = await ctx.database.get('w-zlibrary-stored-book', {})
+            return <as-forward level='always'>
+                <as-slices
+                    header={ <>共有 { storedBooks.length } 本转存的书籍：<br /></> }
+                    sliceLength={5000}
+                >
+                    { storedBooks.map(renderBook({ shortUrl: false })) }
+                </as-slices>
+            </as-forward>
         })
 }
