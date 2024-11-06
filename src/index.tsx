@@ -35,6 +35,7 @@ interface Book {
 }
 
 interface StoredBook extends Book {
+    assetId: number
     fileName: string
     assetUrl: string
     storerUid: string
@@ -73,21 +74,21 @@ export function apply(ctx: Context, config: Config) {
     const renderBook = (options: { shortUrl: boolean, header?: any }) => (book: Book | StoredBook, index?: number) => <>
         { options.header ?? <></> }
         { typeof index === 'number' ? <>
-            <br /> [#{index + 1}]
+            <br />[#{index + 1}]
         </> : '' }
         <br /> [标题] { book.title }
         { book.coverUrl ? <>
-            <br /> [封面] <img src={book.coverUrl} />
+            <br />[封面] <img src={book.coverUrl} />
         </> : '' }
-        <br /> [作者] { (book.authors.length > 2 ? book.authors.slice(0, 2).concat('...') : book.authors).join('; ') }
-        <br /> [年份] { book.year || 'N/A' } [语言] { capitalize(book.language) }
-        <br /> [评分] { renderRating(book.rating) } [质量] { renderRating(book.quality) }
-        <br /> [详情] <a href={ getUrl(book.url, options.shortUrl) }></a>
+        <br />[作者] { (book.authors.length > 2 ? book.authors.slice(0, 2).concat('...') : book.authors).join('; ') }
+        <br />[年份] { book.year || 'N/A' } [语言] { capitalize(book.language) }
+        <br />[评分] { renderRating(book.rating) } [质量] { renderRating(book.quality) }
+        <br />[详情] <a href={ getUrl(book.url, options.shortUrl) }></a>
         { book.downloadUrl ? <>
-            <br /> [大小] { book.fileSize } [类型] { book.extension } [下载] <a href={ getUrl(book.downloadUrl, options.shortUrl) }></a>
+            <br />[大小] { book.fileSize } [类型] { book.extension } [下载] <a href={ getUrl(book.downloadUrl, options.shortUrl) }></a>
         </> : '' }
         { 'assetUrl' in book ? <>
-            <br /> [转存] { book.assetUrl }
+            <br />[转存] <a href={ book.assetUrl }>#{ book.assetId }</a>
         </> : '' }
     </>
 
@@ -125,17 +126,19 @@ export function apply(ctx: Context, config: Config) {
         coverUrl: 'string',
         url: 'string',
         downloadUrl: 'string',
-        year: 'integer',
+        year: 'unsigned',
         language: 'string',
         fileSize: 'string',
         extension: 'string',
-        rating: 'integer',
-        quality: 'integer',
+        rating: 'unsigned',
+        quality: 'unsigned',
         fileName: 'string',
         assetUrl: 'string',
-        storerUid: 'string'
+        storerUid: 'string',
+        assetId: 'unsigned'
     }, {
-        primary: 'fileName'
+        primary: 'assetId',
+        autoInc: true
     })
 
     ctx.i18n.define('en-US', {
@@ -233,7 +236,9 @@ export function apply(ctx: Context, config: Config) {
             </as-forward>
         })
 
-    ctx.command('zlib.store <url:string>', '转存 zlibrary 的书籍到 Koishi', { authority: 2 })
+    ctx.command('zlib.store', 'zlibrary 书籍转存功能')
+
+    ctx.command('zlib.store.fetch <url:string>', '转存 zlibrary 书籍到 Koishi', { authority: 2 })
         .action(async ({ session }, url) => {
             const { url: detailUrl, path: detailPath } = validateDetailUrl(url)
 
@@ -262,14 +267,14 @@ export function apply(ctx: Context, config: Config) {
             })
 
             const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, fileName)
-            await ctx.database.create('w-zlibrary-stored-book', {
+            const { assetId } = await ctx.database.create('w-zlibrary-stored-book', {
                 ...book,
                 fileName,
                 assetUrl,
                 storerUid: session.uid
             })
 
-            return <>成功转存书籍：{assetUrl}</>
+            return <>成功转存书籍：<a href={ assetUrl }>#{assetId}</a></>
         })
     
     ctx.command('zlib.store.list', '查看已转存的 zlibrary 书籍')
@@ -279,5 +284,13 @@ export function apply(ctx: Context, config: Config) {
                 <message>共有 { storedBooks.length } 本转存的书籍</message>
                 { storedBooks.map(renderBook({ shortUrl: false })).map(el => <message>{ el }</message>) }
             </as-forward>
+        })
+
+    ctx.command('zlib.store.send <id:string>', '以文件形式发送转存的 zlibrary 书籍')
+        .action(async ({ session }, id) => {
+            const [ storedBook ] = await ctx.database.get('w-zlibrary-stored-book', + id)
+            if (! storedBook) throw new SessionError('id', [ <>未找到 id 为 <strong>{id}</strong> 的转存书籍</> ])
+            session.send('正在发送文件……')
+            return <file url={storedBook.assetUrl} />
         })
 }
