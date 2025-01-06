@@ -12,13 +12,18 @@ export const inject = [ 'http', 'assetsAlt', 'database' ]
 export interface Config {
     cookie: string
     domain: string
+    pageSize: number
+    sliceLength: number
+    downloadTimeout: number
 }
 
 export const Config: z<Config> = z.object({
-    cookie: z.string().role('textarea').default('').description('要使用的 Cookie（主要用于登录，登录后      才能获取下载链接等）'),
-    domain: z.string().default('z-lib.fm').description('要使用的 zlibrary 域名')
+    cookie: z.string().role('textarea').default('').description('要使用的 Cookie（主要用于登录，登录后才能获取下载链接等）'),
+    domain: z.string().default('z-lib.fm').description('要使用的 zlibrary 域名'),
+    pageSize: z.natural().default(30).description('搜索结果每页显示的条目数'),
+    sliceLength: z.natural().default(5000).description('搜索结果每条的字数限制'),
+    downloadTimeout: z.natural().default(30000).description('下载超时时间（毫秒）')
 })
-
 
 interface Book {
     title: string
@@ -164,7 +169,7 @@ export function apply(ctx: Context, config: Config) {
     ctx.command('zlib.search <filter:text>', '在 zlibrary 中搜索书籍')
         .option('shortUrl', '-s 显示短链接')
         .option('page', '-p <page:posint> 指定页码')
-        .action(async ({ options: { page, shortUrl } }, filter) => {
+        .action(async ({ session, options: { page, shortUrl } }, filter) => {
             const startTime = Date.now()
 
             const requestUrl = `https://${config.domain}/s/${filter}?` + new URLSearchParams({
@@ -211,11 +216,14 @@ export function apply(ctx: Context, config: Config) {
                 + `，用时 ${durationText} 秒`
                 + `（${getLoginStat(username)}）`
 
-            return <as-forward level='always'>
-                <as-slices sliceLength={5000} header={headerText}>
-                    { itemTexts }
-                </as-slices>
-            </as-forward>
+            const { pageSize, sliceLength } = config
+            for (let i = 0; i < itemTexts.length / pageSize; i ++) {
+                await session.sendQueued(<as-forward level='always'>
+                    <as-slices sliceLength={sliceLength} header={headerText}>
+                        { itemTexts.slice(i * pageSize, (i + 1) * pageSize) }
+                    </as-slices>
+                </as-forward>)
+            }
         })
 
     ctx.command('zlib.detail <url:string>', '查看 zlibrary 书籍详情')
@@ -240,41 +248,47 @@ export function apply(ctx: Context, config: Config) {
 
     ctx.command('zlib.store.fetch <url:string>', '转存 zlibrary 书籍到 Koishi', { authority: 2 })
         .action(async ({ session }, url) => {
-            const { url: detailUrl, path: detailPath } = validateDetailUrl(url)
+            try {
+                const { url: detailUrl, path: detailPath } = validateDetailUrl(url)
 
-            session.send(<>正在请求详情页面……</>)
+                session.send(<>正在请求详情页面……</>)
 
-            const book = await fetchBookDetail(detailUrl)
-            const { extension } = book 
-            const downloadUrl = getUrl(book.downloadUrl, false)
-            const fileName = detailPath
-                .slice('/book/'.length)
-                .replaceAll('/', '_')
-                .replace(/html$/, extension)
+                const book = await fetchBookDetail(detailUrl)
+                const { extension } = book 
+                const downloadUrl = getUrl(book.downloadUrl, false)
+                const fileName = detailPath
+                    .slice('/book/'.length)
+                    .replaceAll('/', '_')
+                    .replace(/html$/, extension)
 
-            const [ storedBook ] = await ctx.database.get('w-zlibrary-stored-book', fileName)
-            if (storedBook) {
-                return <>已转存过此书籍：{storedBook.assetUrl}</>
-            }
-
-            session.send(<>已获取<a href={downloadUrl}>下载链接</a>，下载中……</>)
-
-            const downloadBlob = await ctx.http.get(downloadUrl, {
-                responseType: 'blob',
-                headers: {
-                    Cookie: config.cookie
+                const [ storedBook ] = await ctx.database.get('w-zlibrary-stored-book', fileName)
+                if (storedBook) {
+                    return <>已转存过此书籍：{storedBook.assetUrl}</>
                 }
-            })
 
-            const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, fileName)
-            const { assetId } = await ctx.database.create('w-zlibrary-stored-book', {
-                ...book,
-                fileName,
-                assetUrl,
-                storerUid: session.uid
-            })
+                session.send(<>已获取<a href={downloadUrl}>下载链接</a>，下载中……</>)
 
-            return <>成功转存书籍：<a href={ assetUrl }>#{assetId}</a></>
+                const downloadBlob = await ctx.http.get(downloadUrl, {
+                    responseType: 'blob',
+                    headers: {
+                        Cookie: config.cookie
+                    },
+                    timeout: config.downloadTimeout
+                })
+
+                const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, fileName)
+                const { assetId } = await ctx.database.create('w-zlibrary-stored-book', {
+                    ...book,
+                    fileName,
+                    assetUrl,
+                    storerUid: session.uid
+                })
+
+                return <>成功转存书籍：<a href={assetUrl}>#{assetId}</a></>
+            }
+            catch (err) {
+                return <>发生错误：{err}</>
+            }
         })
     
     ctx.command('zlib.store.list', '查看已转存的 zlibrary 书籍')
