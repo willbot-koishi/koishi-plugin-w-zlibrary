@@ -229,7 +229,9 @@ export function apply(ctx: Context, config: Config) {
                     }
                 })
 
-            const itemTexts = items.map(renderBook({ shortUrl, header: <br /> }))
+            const itemTexts = items.map(item => <message>
+                { renderBook({ shortUrl, header: <br /> })(item) }
+            </message>)
 
             const pageTotal = + $('.paginator + script').text().match(/pagesTotal:\s*(\d+)/)?.[1] || '?'
             const pageText = `（第 ${page ?? 1}/${pageTotal} 页）`
@@ -237,12 +239,11 @@ export function apply(ctx: Context, config: Config) {
                 + `，用时 ${durationText} 秒`
                 + `（${ showLoginStat(getLoginStat($)) }）`
 
-            const { pageSize, sliceLength } = config
+            const { pageSize } = config
             for (let i = 0; i < itemTexts.length / pageSize; i ++) {
                 await session.sendQueued(<as-forward level='always'>
-                    <as-slices sliceLength={sliceLength} header={headerText}>
-                        { itemTexts.slice(i * pageSize, (i + 1) * pageSize) }
-                    </as-slices>
+                    { headerText }
+                    { itemTexts.slice(i * pageSize, (i + 1) * pageSize) }
                 </as-forward>)
             }
         })
