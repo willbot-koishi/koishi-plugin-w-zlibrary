@@ -60,7 +60,30 @@ const escapeRegExp = (segments: TemplateStringsArray, ...args: string[]) => {
 }
 
 export function apply(ctx: Context, config: Config) {
-    const getLoginStat = (username?: string) => username ? `已登录：${username}` : '未登录'
+    type LoginStat = null | {
+        username: string
+        limit: {
+            rest: number
+            total: number
+        }
+    }
+
+    const getLoginStat = ($: cheerio.CheerioAPI): LoginStat => {
+        const username = $('.user-card__name').text().trim()
+        if (! username) return null
+        const limit = $('.user-card__status + div > div:first-child > div:first-child > div:first-child').text().trim()
+        const [ rest, total ] = limit.split('/').map(Number)
+        return {
+            username,
+            limit: { rest, total }
+        }
+    }
+
+    const showLoginStat = (stat: LoginStat) => {
+        if (! stat) return '未登录'
+        const { username, limit } = stat
+        return `已登录：${username}，剩余 ${limit.rest}/${limit.total} 次下载`
+    }
 
     const validateDetailUrl = (url: string) => {
         const match = url.match(escapeRegExp`^((https?://)?${config.domain})?/book/.*\\.html$`)
@@ -152,7 +175,7 @@ export function apply(ctx: Context, config: Config) {
 
     ctx.command('zlib', 'zlibrary 功能')
 
-    ctx.command('zlib.loginstat', '查看 zlibrary 登录状态')
+    ctx.command('zlib.stat', '查看 zlibrary 登录状态')
         .action(async () => {
             const requestUrl = `https://${config.domain}/`
             const html = await ctx.http.get(requestUrl, {
@@ -162,8 +185,8 @@ export function apply(ctx: Context, config: Config) {
                 }
             })
             const $ = cheerio.load(html)
-            const username = $('.user-card__name').text().trim()
-            return getLoginStat(username)
+            const stat = getLoginStat($)
+            return showLoginStat(stat)
         })
 
     ctx.command('zlib.search <filter:text>', '在 zlibrary 中搜索书籍')
@@ -206,15 +229,13 @@ export function apply(ctx: Context, config: Config) {
                     }
                 })
 
-            const username = $('.user-card__name').text().trim()
-
             const itemTexts = items.map(renderBook({ shortUrl, header: <br /> }))
 
             const pageTotal = + $('.paginator + script').text().match(/pagesTotal:\s*(\d+)/)?.[1] || '?'
             const pageText = `（第 ${page ?? 1}/${pageTotal} 页）`
             const headerText = `在 ${config.domain} 找到 ${items.length} 条符合 "${filter}" 的结果${pageText}`
                 + `，用时 ${durationText} 秒`
-                + `（${getLoginStat(username)}）`
+                + `（${ showLoginStat(getLoginStat($)) }）`
 
             const { pageSize, sliceLength } = config
             for (let i = 0; i < itemTexts.length / pageSize; i ++) {
@@ -246,7 +267,7 @@ export function apply(ctx: Context, config: Config) {
 
     ctx.command('zlib.store', 'zlibrary 书籍转存功能')
 
-    ctx.command('zlib.store.fetch <url:string>', '转存 zlibrary 书籍到 Koishi', { authority: 2 })
+    ctx.command('zlib.store.fetch <url:string>', '转存 zlibrary 书籍到 Koishi')
         .action(async ({ session }, url) => {
             try {
                 const { url: detailUrl, path: detailPath } = validateDetailUrl(url)
@@ -268,13 +289,29 @@ export function apply(ctx: Context, config: Config) {
 
                 session.send(<>已获取<a href={downloadUrl}>下载链接</a>，下载中……</>)
 
+                const abortController = new AbortController()
+
+                const timeoutTimer = setTimeout(async () => {
+                    await session.send(<>下载时间过长，已超过 {config.downloadTimeout / 1000} 秒，是否继续等待？（y/N）</>)
+                    const toContinue = await session.prompt(response => {
+                        if (session.uid !== response.uid) return
+                        return { y: true, n: false }[ response.content.toLowerCase() ]
+                    })
+                    if (! toContinue) abortController.abort()
+                    else await session.send(<>正在继续下载……</>)
+                }, config.downloadTimeout)
+
                 const downloadBlob = await ctx.http.get(downloadUrl, {
                     responseType: 'blob',
                     headers: {
                         Cookie: config.cookie
                     },
-                    timeout: config.downloadTimeout
+                    keepAlive: true,
+                    signal: abortController.signal
                 })
+
+                clearTimeout(timeoutTimer)
+                await session.send(<>下载完成，正在上传文件……</>)
 
                 const assetUrl = await ctx.assetsAlt.uploadFile(downloadBlob, fileName)
                 const { assetId } = await ctx.database.create('w-zlibrary-stored-book', {
@@ -287,6 +324,7 @@ export function apply(ctx: Context, config: Config) {
                 return <>成功转存书籍：<a href={assetUrl}>#{assetId}</a></>
             }
             catch (err) {
+                if (err instanceof Error && err.name === 'AbortError') return <>已放弃下载</>
                 return <>发生错误：{err}</>
             }
         })
@@ -304,7 +342,7 @@ export function apply(ctx: Context, config: Config) {
         .action(async ({ session }, id) => {
             const [ storedBook ] = await ctx.database.get('w-zlibrary-stored-book', + id)
             if (! storedBook) throw new SessionError('id', [ <>未找到 id 为 <strong>{id}</strong> 的转存书籍</> ])
-            session.send('正在发送文件……')
+            session.send(<>正在发送文件……</>)
             return <file url={storedBook.assetUrl} />
         })
 }
