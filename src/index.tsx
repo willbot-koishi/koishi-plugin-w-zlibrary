@@ -99,12 +99,12 @@ export function apply(ctx: Context, config: Config) {
 
     const renderRating = (rating: number) => '★'.repeat(rating) || '☆'
 
-    const renderBook = (options: { shortUrl: boolean, header?: any }) => (book: Book | StoredBook, index?: number) => <>
+    const renderBook = (options: { shortUrl: boolean, header?: any }) => (book: Book | StoredBook) => <>
         { options.header ?? <></> }
-        { typeof index === 'number' ? <>
-            <br />[#{index + 1}]
+        { 'assetId' in book ? <>
+            <br />[#{book.assetId + 1}]
         </> : '' }
-        <br /> [标题] { book.title }
+        <br />[标题] { book.title }
         { book.coverUrl ? <>
             <br />[封面] <img src={book.coverUrl} />
         </> : '' }
@@ -116,7 +116,7 @@ export function apply(ctx: Context, config: Config) {
             <br />[大小] { book.fileSize } [类型] { book.extension } [下载] <a href={ getUrl(book.downloadUrl, options.shortUrl) }></a>
         </> : '' }
         { 'assetUrl' in book ? <>
-            <br />[转存] <a href={ book.assetUrl }>#{ book.assetId }</a>
+            <br />[转存] <a href={ book.assetUrl }></a>
         </> : '' }
     </>
 
@@ -331,11 +331,31 @@ export function apply(ctx: Context, config: Config) {
         })
     
     ctx.command('zlib.store.list', '查看已转存的 zlibrary 书籍')
-        .action(async () => {
-            const storedBooks = await ctx.database.get('w-zlibrary-stored-book', {})
+        .option('page', '-p <page:posint> 指定页码', { fallback: 1 })
+        .action(async ({ options }) => {
+            const { pageSize } = config
+            const { page } = options
+            const pageStart = (page - 1) * pageSize + 1
+            const pageEnd = page * pageSize
+            const [ books, [ lastBook ] ] = await Promise.all([
+                ctx.database.get(
+                    'w-zlibrary-stored-book',
+                    { assetId: { $gte: pageStart, $lte: pageEnd } }
+                ),
+                ctx.database.get(
+                    'w-zlibrary-stored-book',
+                    {}, { limit: 1, sort: { assetId: 'desc' } }
+                )
+            ])
+            if (! lastBook) return <>暂无转存的书籍</>
+
+            const bookTotal = lastBook.assetId
+            const pageTotal = Math.ceil(bookTotal / pageSize)
+            if (page > pageTotal) return <>已超过最大页码 {pageTotal}</>
+
             return <as-forward level='always'>
-                <message>共有 { storedBooks.length } 本转存的书籍</message>
-                { storedBooks.map(renderBook({ shortUrl: false })).map(el => <message>{ el }</message>) }
+                <message>查询到 {books.length}/{bookTotal} 本转存的书籍（第 {page}/{pageTotal} 页，#{pageStart} ~ #{pageEnd}）</message>
+                { books.map(book => <message>{ renderBook({ shortUrl: false })(book) }</message>) }
             </as-forward>
         })
 
