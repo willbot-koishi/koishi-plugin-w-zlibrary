@@ -59,6 +59,9 @@ const escapeRegExp = (segments: TemplateStringsArray, ...args: string[]) => {
   return new RegExp(re, 'g')
 }
 
+const ellipsis = (text: string, length: number) =>
+  text.length <= length ? text : text.slice(0, length - 1) + '…'
+
 export function apply(ctx: Context, config: Config) {
   type LoginStat = null | {
     username: string
@@ -102,7 +105,7 @@ export function apply(ctx: Context, config: Config) {
   const renderBook = (options: { shortUrl: boolean, header?: any }) => (book: Book | StoredBook) => <>
     { options.header ?? <></> }
     { 'assetId' in book ? <>
-      <br />[#{book.assetId + 1}]
+      <br />[#{book.assetId}]
     </> : '' }
     <br />[标题] { book.title }
     { book.coverUrl ? <>
@@ -363,7 +366,11 @@ export function apply(ctx: Context, config: Config) {
     .action(async ({ session }, id) => {
       const [ storedBook ] = await ctx.database.get('w-zlibrary-stored-book', + id)
       if (! storedBook) throw new SessionError('id', [ <>未找到 id 为 <strong>{id}</strong> 的转存书籍</> ])
-      session.send(<>正在发送文件……</>)
-      return <file url={storedBook.assetUrl} />
+      const extension = storedBook.extension.toLowerCase()
+      const MAX_FILE_NAME_LENGTH = 32
+      const fullFileName = `${storedBook.title}.${extension}`
+      const fileName = `${ellipsis(storedBook.title, MAX_FILE_NAME_LENGTH - extension.length + 1)}.${extension}`
+      session.send(<>正在发送文件（{fullFileName}）……</>)
+      return <file url={storedBook.assetUrl} title={fileName} />
     })
 }
