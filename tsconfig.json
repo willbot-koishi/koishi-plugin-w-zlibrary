@@ -11,6 +11,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "moduleResolution": "bundler",
+    "strict": true,
     "jsx": "react-jsx",
     "jsxImportSource": "@satorijs/element",
     "types": [
